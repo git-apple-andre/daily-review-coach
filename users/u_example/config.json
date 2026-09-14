@@ -1,0 +1,5 @@
+{
+  "tz": "Asia/Shanghai",
+  "chat_id": "<你的飞书群 chat_id，形如 oc_xxxxxxxx>",
+  "note_template": "daily"
+}

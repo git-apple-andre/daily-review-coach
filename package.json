@@ -1,0 +1,31 @@
+{
+  "name": "daily-review-coach",
+  "version": "1.0.0",
+  "description": "AI 每日复盘与备考追踪系统 —— 飞书卡片驱动的云端自动化，不依赖任何常开设备",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "doctor": "node scripts/doctor.mjs",
+    "test": "node --test test/",
+    "morning": "node scripts/morning.mjs",
+    "evening": "node scripts/evening.mjs",
+    "generate": "node scripts/generate.mjs",
+    "audit": "python3 tools/audit-secrets.py ."
+  },
+  "keywords": [
+    "n8n-alternative",
+    "obsidian",
+    "feishu",
+    "lark",
+    "daily-review",
+    "spaced-repetition",
+    "github-actions",
+    "automation",
+    "llm",
+    "exam-prep"
+  ],
+  "license": "MIT"
+}

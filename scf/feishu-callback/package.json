@@ -1,0 +1,14 @@
+{
+  "name": "feishu-callback",
+  "version": "1.0.0",
+  "description": "腾讯云 SCF 回调函数：飞书卡片回调 → 判分写回 GitHub 日记 + 时区切换（n8n W3 逻辑移植）",
+  "type": "module",
+  "main": "index.mjs",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test ../../test/grade.test.mjs"
+  },
+  "private": true
+}

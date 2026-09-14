@@ -1,0 +1,46 @@
+name: Morning
+on:
+  # 每小时整点触发（UTC）；脚本内按用户时区做 8-13 点守卫，窗口外 10 秒内秒退
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch: {}
+
+# push 回写需要 contents: write（新仓库 GITHUB_TOKEN 默认只读）
+permissions:
+  contents: write
+
+# 防 schedule 与手动 dispatch 撞车并发写同一日记
+concurrency:
+  group: morning
+  cancel-in-progress: false
+
+jobs:
+  morning:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20 # ≥20.11（import.meta.dirname 依赖）
+      - name: Run morning flow
+        env:
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+          DAILY_ROOT: ${{ github.workspace }}
+        run: node scripts/morning.mjs
+      - name: Commit changes
+        run: |
+          git config user.name "daily-bot"
+          git config user.email "bot@daily-review.local"
+          git add -A
+          git commit -m "auto: morning run $(date -u +%FT%TZ)" || echo "nothing to commit"
+          git push
+      - name: Notify failure
+        if: failure()
+        env:
+          FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+          DAILY_ROOT: ${{ github.workspace }}
+          FAIL_MSG: "晨间流程失败：${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        run: node scripts/notify-fail.mjs
