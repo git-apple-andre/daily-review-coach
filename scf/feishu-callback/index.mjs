@@ -395,7 +395,21 @@ export async function main_handler(event, context) {
     // userId 白名单（Task 1 审查裁决：未注册/未激活一律拒绝处理）
     const users = await backend.getUsers();
     const userId = resolveUser(users, cb.openId);
-    if (!userId) return ok({ code: 3, msg: 'open_id 未注册或未激活，已拒绝处理' });
+    if (!userId) {
+      // 把收到的 open_id 同时打进日志和**回执**。
+      //
+      // 为什么放进回执：users.json 里 open_id 还是占位符时，这是唯一能拿到
+      // 真实值的途径 —— 点一下按钮，飞书卡片上直接显示出来，不用翻腾讯云日志，
+      // 也不用为了调试重新部署函数。
+      //
+      // open_id 是应用内标识，不是凭证；能点到这张卡片的人本来就在这个群里。
+      const who = cb.openId || '(回调里没带 open_id)';
+      console.warn(`[未注册] 收到 open_id=${who}，不在白名单内`);
+      return ok({
+        code: 3,
+        msg: `open_id 未注册，请把这串值填入 users/users.json：${who}`,
+      });
+    }
 
     // 防重放（飞书 3s 超时重试拦截；10 分钟后允许重新提交修正）
     if (checkReplay(replayKey(cb))) return ok({ msg: 'duplicate ignored (replay window)' });
@@ -418,3 +432,33 @@ export async function main_handler(event, context) {
 
 /** 别名：SCF 控制台「执行方法」填 index.handler 或 index.main_handler 均可 */
 export const handler = main_handler;
+
+// ================= 提前响应（飞书 3 秒超时兜底） =================
+
+/**
+ * 让 work 与"提前返回"赛跑。
+ *
+ * 飞书要求卡片回调 3 秒内响应，但完整处理要打 5 次以上跨洋 GitHub API，
+ * 实测 ~2.6 秒 —— 卡在临界点，抖一下就报 200341。
+ * 所以超时后先返回一个 toast，让 work 继续在后台跑完。
+ *
+ * @param work      Promise，已完成时返回 handler 的 {statusCode, headers, body}
+ * @param earlyMs   超过这个毫秒数就先响应
+ * @returns { early: true } 或 { early: false, result }
+ */
+export async function raceEarly(work, earlyMs) {
+  let timer;
+  const early = new Promise((resolve) => {
+    timer = setTimeout(() => resolve({ early: true }), earlyMs);
+  });
+
+  const settled = work.then(
+    (result) => ({ early: false, result }),
+    // 失败也要如实返回，由调用方决定怎么响应；吞掉会变成 unhandledRejection
+    (error) => ({ early: false, error }),
+  );
+
+  const winner = await Promise.race([settled, early]);
+  if (!winner.early) clearTimeout(timer);
+  return winner;
+}

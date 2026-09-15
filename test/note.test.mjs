@@ -159,3 +159,23 @@ test('atomicWrite 原子替换', async () => {
   // brief 原断言 readFileSync(f+'.tmp')==='v2'：writeFile→rename 后 tmp 已被消耗（原子语义），改为断言 tmp 不存在
   assert.ok(!existsSync(f + '.tmp'), 'rename 后临时文件应被消耗');
 });
+
+test('atomicWrite 父目录不存在时自动创建（回归：2026-09-15 卡片收不到）', async () => {
+  // 真实故障：用户把日记"平铺到仓库根"后，users/<id>/daily/ 成了空目录，
+  // git 不跟踪空目录 → GitHub Actions 里 clone 出来根本没有这个目录 →
+  // writeFile ENOENT → 晨间流程在"出题完成"之后崩掉 → 卡片收不到。
+  const dir = mkdtempSync(path.join(tmpdir(), 'note-'));
+  const nested = path.join(dir, 'users', 'u_test', 'daily', '晨间日记+复盘 - 20260915.md');
+
+  assert.ok(!existsSync(path.dirname(nested)), '前置条件：父目录确实不存在');
+
+  await atomicWrite(nested, '内容');
+  assert.equal(readFileSync(nested, 'utf8'), '内容', '应该自动建目录并写入成功');
+});
+
+test('atomicWrite 多层缺失目录也能创建', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'note-'));
+  const deep = path.join(dir, 'a', 'b', 'c', 'd', 'x.md');
+  await atomicWrite(deep, 'ok');
+  assert.equal(readFileSync(deep, 'utf8'), 'ok');
+});

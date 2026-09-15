@@ -5,7 +5,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D20.11-brightgreen)](https://nodejs.org/)
-[![Tests](https://img.shields.io/badge/tests-81%20passing-brightgreen)](#跑测试)
+[![Tests](https://img.shields.io/badge/tests-90%20passing-brightgreen)](#跑测试)
 [![Cost](https://img.shields.io/badge/月成本-¥3-blue)](#花多少钱)
 
 **中文** | [English](#english)
@@ -213,23 +213,111 @@ LLM_API_KEY=xxx FEISHU_APP_ID=xxx FEISHU_APP_SECRET=xxx FEISHU_CHAT_ID=xxx npm r
 
 按顺序检查：
 
-1. **机器人拉进群了吗** —— 飞书开放平台 → 你的应用 → 添加应用能力 → 机器人；然后在群里 @ 一次机器人
-2. **时间窗口对吗** —— 晨间只在**你配置的时区** 8:00–13:00 执行，晚间 20:00–23:00。**时间没到不会发**
-3. **Actions 是不是没开** —— 见上面的问题
-4. **想看详细日志** —— Actions → 点那次运行 → 点 `Run morning flow` 展开
+1. **Actions 里有没有运行记录** —— 如果没有，多半是下面那个「GitHub cron 丢触发」的问题
+2. **机器人拉进群了吗** —— 飞书开放平台 → 你的应用 → 添加应用能力 → 机器人；然后在群里 @ 一次机器人
+3. **时间窗口对吗** —— 晨间只在**你配置的时区** 8:00–13:00 执行，晚间 20:00–23:00。**时间没到不会发**
+4. **Actions 是不是没开** —— 见上面的问题
+5. **日志里看 `ENOENT`** —— 如果是 `no such file or directory ... users/<id>/daily/`，
+   说明日记目录不存在。git 不跟踪空目录，clone 出来可能没有这个目录。
+   本项目的 `atomicWrite` 会自动创建，如果你改过这块代码要留意
+6. **想看详细日志** —— Actions → 点那次运行 → 点 `Run morning flow` 展开
+
+</details>
+
+<details>
+<summary><b>⚠️ 卡片经常收不到？GitHub 的 cron 其实很不可靠</b></summary>
+
+**这是最容易踩、也最难自己诊断的坑。**
+
+GitHub Actions 的 `schedule` 在高负载时会延迟 5–15 分钟，**但更严重的是它会直接丢触发**。实测数据（私有仓库、免费额度）：
+
+| 预期 | 实际 |
+|---|---|
+| 每小时 1 次 = 24 次/天 | **一天只触发 2–3 次，时间随机** |
+
+而且**日志里什么都看不到** —— 没触发就是没有运行记录，很容易误以为是自己代码写错了。
+
+### 判断方法
+
+```bash
+gh run list --repo <你的仓库> --limit 60 --json createdAt \
+  --jq '.[] | .createdAt[11:13]' | sort | uniq -c
+```
+
+每小时都该有记录，却只有零星几个 —— 就是这个问题。
+
+### 解法：加一个外部定时器
+
+用 [cron-job.org](https://cron-job.org)（免费）每天准点调 GitHub 的 `workflow_dispatch` 接口：
+
+| 配置 | 值 |
+|---|---|
+| URL | `https://api.github.com/repos/<owner>/<repo>/actions/workflows/morning.yml/dispatches` |
+| Method | **POST** |
+| Body | `{"ref":"main"}` |
+| Headers | `Authorization: Bearer <token>`<br>`Accept: application/vnd.github+json`<br>`Content-Type: application/json` |
+
+Token 只需要 **`workflow`** 权限（不需要 `repo`），建议设为不过期。
+
+**两个必踩的坑**：
+
+1. **必须先选 POST，请求体的输入框才会出现。** 先填 body 再改方法，body 会被丢掉，报 422。
+2. **保存时可能报「URL 错误」，那是误报。** cron-job.org 保存时会用 GET 预检 URL，而 GitHub 的 dispatch 接口只接受 POST、对 GET 返回 404。**看 History 里的真实状态码**：**204 就是成功了**。
+
+> **GitHub 自己的 schedule 不用关** —— 代码里有幂等保护（`morning_pushed` / `evening_pushed`），同一天只会执行一次，留着当备份。
 
 </details>
 
 <details>
 <summary><b>卡片的按钮点了没反应</b></summary>
 
-说明第 5 步（部署回调）没做或没做对。检查：
+按这个顺序查（**从最常见到最罕见**）：
+
+**① `open_id` 没填** ← 首次部署最常见
+
+`users/users.json` 里的 `open_id` 还是占位符。代码有个安全白名单，只处理已注册的 `open_id`，所以一律拒绝。
+
+**怎么拿真实值**：SCF 日志里会有
+
+```
+[未注册] 收到 open_id=ou_xxxxxxxx，不在白名单内
+```
+
+把它填进 `users/users.json`，**不用重新部署 SCF**（函数每次都从 GitHub 读这个文件）。
+
+**② 返回了 200341**
+
+飞书要求卡片回调 **3 秒内**响应。完整处理要打 5+ 次跨洋 GitHub API，实测 2.6 秒，卡在临界点上。
+
+本项目的 `server.mjs` 已经做了提前响应（1.8 秒未完成就先返回 toast，后台继续跑），
+如果你改过这块，用 SCF 日志的 `Duration` 判断。
+
+**③ `exec format error`**
+
+部署包坏了 —— 多半是用了腾讯云**在线代码编辑器**逐文件粘贴，
+把 `scf_bootstrap` 的行尾改成了 CRLF，或丢了可执行位。**用 zip 包上传，别用在线编辑器。**
+
+**④ 其他**
 
 - 腾讯云 SCF 的 API 网关触发器是否已发布
 - 飞书开放平台 → 事件与回调 → 「卡片请求网址」是否填了 SCF 的地址
 - 用 curl 测一下：`curl 你的SCF地址/health` 应该返回 `{"ok":true}`
 
 详见 [docs/部署SCF回调.md](docs/部署SCF回调.md)。
+
+</details>
+
+<details>
+<summary><b>按钮有回执消息，但笔记没更新</b></summary>
+
+回执发出去了说明函数跑到了最后，那问题在**写回 GitHub 那一步**：
+
+1. **`GITHUB_TOKEN` 过期了** —— 这是最典型的症状。GitHub PAT 到期后，
+   函数读得到数据但写不回去。**去腾讯云 SCF 换环境变量**（不是 GitHub Secrets）
+2. **token 权限不足** —— 需要 `repo` 全选（或 fine-grained 的 Contents 读写）
+3. **看 SCF 日志** —— 搜索 `GITHUB_TOKEN` 或 `401` / `403`
+
+> 建议把 SCF 用的 token 设为**不过期**。它是给程序用的，到期只会在你最忙的时候突然坏掉。
 
 </details>
 
@@ -268,7 +356,7 @@ npm run audit
 npm test
 ```
 
-81 个测试覆盖：判分逻辑、笔记读写、时区守卫、飞书卡片组装、模板渲染、原子写。
+90 个测试覆盖：判分逻辑、笔记读写、时区守卫、飞书卡片组装、模板渲染、原子写。
 
 ---
 
@@ -301,7 +389,7 @@ daily-review-coach/
 │   └── u_example/               # 每个用户一个目录
 │       ├── config.json          # 时区 / 群 ID / 模板
 │       └── daily/               # 该用户的日记
-├── test/                        # 81 个测试
+├── test/                        # 90 个测试
 └── tools/audit-secrets.py       # 敏感信息审计
 ```
 

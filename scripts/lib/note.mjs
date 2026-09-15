@@ -2,7 +2,7 @@
 // 移植源：n8n W1「渲染模板」「注入卡片」「标记morning_pushed」+ W3「重建笔记(晨间)」setLine/fillFrog（20260909-fix 备份的已部署版）
 // 数据引用改写：$json.data/$('准备数据').first().json → 函数参数；W3 的节内 writeScope 改为纯函数返回
 import { readFileSync } from 'node:fs';
-import { writeFile, rename } from 'node:fs/promises';
+import { writeFile, rename, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 
 function rootDir() {
@@ -26,6 +26,13 @@ export function readNote(userId, ymd) {
 
 /** 原子写入：先写 <path>.tmp 再 rename 覆盖（POSIX 原子替换） */
 export async function atomicWrite(file, content) {
+  // 必须先确保父目录存在。
+  //
+  // git 不跟踪空目录 —— 用户把日记"平铺到仓库根"之后，users/<id>/daily/
+  // 就成了空目录，下次 clone 时它根本不存在，直接写会 ENOENT，
+  // 让整个晨间流程在"出题完成"之后崩掉，表现是"卡片收不到"。
+  await mkdir(path.dirname(file), { recursive: true });
+
   const tmp = file + '.tmp';
   await writeFile(tmp, content, 'utf8');
   await rename(tmp, file);
