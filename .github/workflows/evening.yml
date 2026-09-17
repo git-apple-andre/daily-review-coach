@@ -1,8 +1,8 @@
 name: Evening
 on:
-  # 每小时整点触发（UTC）；脚本内按用户时区做 20-23 点守卫，窗口外 10 秒内秒退
-  schedule:
-    - cron: '0 * * * *'
+  # 2026-09-17 停用定时触发：本仓库是公开演示版，没有 corpus 也没有 secrets，
+  # 定时跑只会在时间窗内崩在 "ENOENT: scandir .../corpus" 并触发 GitHub 失败通知。
+  # 需要演示时用 workflow_dispatch 手动触发。
   workflow_dispatch: {}
 
 # push 回写需要 contents: write（新仓库 GITHUB_TOKEN 默认只读）
